@@ -52,8 +52,8 @@ class GPTJClassification(pl.LightningModule):
         self.model_name = model_name
 
         self.model = GPTJPromptTuningLM.from_pretrained(self.model_name,
-                                                          #device_map="auto",
-                                                          #load_in_8bit=True,#supported only on GPU
+                                                          device_map="auto",
+                                                          load_in_8bit=True,#supported only on GPU
                                                           #dtype="bfloat16",
                                                           n_tokens=self.n_prompt_tokens,
                                                           initialize_from_vocab=self.init_from_vocab)
