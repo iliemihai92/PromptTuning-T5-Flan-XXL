@@ -5,19 +5,23 @@ from transformers import GPTJForCausalLM
 import torch
 import torch.nn as nn
 
+device="cuda"
 
 class GPTPromptTuningMixin:
+    # SET DEVICE CUDA
+    device = "cuda"
+
     @classmethod
     def from_pretrained(
         cls,
         pretrained_model_name_or_path: str,
         soft_prompt_path: str = None,
         n_tokens: int = None,
-        initialize_from_vocab: bool = True,
+        initialize_from_vocab: bool = False,
         random_range: float = 0.5,
         **kwargs,
     ):
-        model = super().from_pretrained(pretrained_model_name_or_path, **kwargs)
+        model = super().from_pretrained(pretrained_model_name_or_path, **kwargs).cuda()
 
         # Make sure to freeze Tranformers model
         for param in model.parameters():
@@ -44,9 +48,10 @@ class GPTPromptTuningMixin:
             soft_prompt_path: torch soft prompt file path
         """
         self.soft_prompt = torch.load(
-            soft_prompt_path, map_location=torch.device("cpu")
+            soft_prompt_path, map_location=torch.device(device)
         )
         self.n_tokens = self.soft_prompt.num_embeddings
+
         print(f"Set soft prompt! (n_tokens: {self.n_tokens})")
 
     def initialize_soft_prompt(
@@ -57,8 +62,10 @@ class GPTPromptTuningMixin:
     ) -> None:
         self.n_tokens = n_tokens
         if initialize_from_vocab:
+            print("Init from vocab...")
             init_prompt_value = self.transformer.wte.weight[:n_tokens].clone().detach()
         else:
+            print("Init from random....")
             init_prompt_value = torch.FloatTensor(2, 10).uniform_(
                 -random_range, random_range
             )
@@ -73,7 +80,7 @@ class GPTPromptTuningMixin:
             inputs_embeds = inputs_embeds.unsqueeze(0)
 
         # [batch_size, n_tokens, n_embd]
-        learned_embeds = self.soft_prompt.weight.repeat(inputs_embeds.size(0), 1, 1)
+        learned_embeds = self.soft_prompt.weight.repeat(inputs_embeds.size(0), 1, 1).to("cuda")
 
         inputs_embeds = torch.cat([learned_embeds, inputs_embeds], dim=1)
 
@@ -86,7 +93,7 @@ class GPTPromptTuningMixin:
         n_batches = labels.shape[0]
         return torch.cat(
             [
-                torch.full((n_batches, self.n_tokens), ignore_index).to(self.device),
+                torch.full((n_batches, self.n_tokens), ignore_index).to(device),
                 labels,
             ],
             dim=1,
@@ -99,7 +106,7 @@ class GPTPromptTuningMixin:
 
         n_batches = attention_mask.shape[0]
         return torch.cat(
-            [torch.full((n_batches, self.n_tokens), 1).to(self.device), attention_mask],
+            [torch.full((n_batches, self.n_tokens), 1).to(device), attention_mask],
             dim=1,
         )
 
@@ -125,16 +132,20 @@ class GPTPromptTuningMixin:
         output_hidden_states=None,
         return_dict=None,
     ):
+ 
+        # put model on cuda
+        self.transformer = self.transformer.to("cuda")
+
         if input_ids is not None:
             inputs_embeds = self._cat_learned_embedding_to_input(input_ids).to(
-                self.device
+                device
             )
 
         if labels is not None:
-            labels = self._extend_labels(labels).to(self.device)
+            labels = self._extend_labels(labels).to(device)
 
         if attention_mask is not None:
-            attention_mask = self._extend_attention_mask(attention_mask).to(self.device)
+            attention_mask = self._extend_attention_mask(attention_mask).to(device)
 
         # Drop most of the args for now
         return super().forward(

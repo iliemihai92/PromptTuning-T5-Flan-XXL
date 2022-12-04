@@ -78,11 +78,12 @@ class GPTJClassification(pl.LightningModule):
             sentences.append(instance["sentence"])
 
         sentences_batch = self.tokenizer(sentences, padding="max_length", max_length=2008, truncation=True, return_tensors="pt")
+        sentences_batch = {key:val.to("cuda") for key, val in zip(sentences_batch.keys(), sentences_batch.values())}
         return sentences_batch
 
     def forward(self, sentence):
         outputs = self.model(input_ids=sentence["input_ids"], attention_mask=sentence["attention_mask"],
-                             labels=sentence["input_ids"], )
+                             labels=sentence["input_ids"] )
         loss, logits = outputs.loss, outputs.logits
         return loss, logits
 
@@ -123,7 +124,7 @@ def cli_main():
     model = GPTJClassification()
     trainer = pl.Trainer(max_epochs=model.max_train_steps)
 
-    train_loader = DataLoader(train_dataset, batch_size=16, num_workers=4, shuffle=True, collate_fn=model.my_collate, pin_memory=True, drop_last=True)
+    train_loader = DataLoader(train_dataset, batch_size=16,  shuffle=True, collate_fn=model.my_collate, drop_last=True)
     #test_loader = DataLoader(test_dataset, batch_size=16, num_workers=4, shuffle=False, collate_fn=model.my_collate, pin_memory=True, drop_last=True )
     #val_loader = DataLoader(valid_dataset, batch_size=16, num_workers=4, shuffle=False, collate_fn=model.my_collate, pin_memory=True, drop_last=True)
 
