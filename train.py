@@ -39,7 +39,7 @@ class GPTJClassification(pl.LightningModule):
                  weight_decay:float=0.01,
                  learning_rate:float=0.01,
                  num_warmup_steps:int=0,
-                 n_prompt_tokens:int=10,
+                 n_prompt_tokens:int=40,
                  init_from_vocab:bool=True):
         super().__init__()
         self.num_train_epochs=num_train_epochs
@@ -63,8 +63,6 @@ class GPTJClassification(pl.LightningModule):
         self.model.resize_token_embeddings(self.model.config.vocab_size + 1)
         # because reshaping, need to refreeze embeddings
         for name, param in self.model.named_parameters():
-            #if param.requires_grad==True:
-            #    print(name)
             if name in ["transformer.wte.weight", "lm_head.weight", "lm_head.bias"]:
                 param.requires_grad=False
 
@@ -90,17 +88,17 @@ class GPTJClassification(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         loss, logits = self(batch)
         self.train_loss.append(loss.detach().cpu().numpy())
-        return loss#{"train_loss":loss}
+        return loss
 
     def validation_step(self, batch, batch_idx):
         loss, logits = self(batch)
         self.val_loss.append(loss.detach().cpu().numpy())
-        return loss#{"valid_loss":loss}
+        return loss
 
     def test_step(self, batch, batch_idx):
         loss, logits = self(batch)
         self.test_loss.append(loss.detach().cpu().numpy())
-        return loss#{"test_loss":loss}
+        return loss
 
     def configure_optimizers(self):
         optimizer_grouped_parameters = [
