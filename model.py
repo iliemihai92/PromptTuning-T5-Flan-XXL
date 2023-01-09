@@ -1,15 +1,15 @@
 import os
 from pathlib import Path
 
-from transformers import GPTJForCausalLM
+from transformers import T5ForConditionalGeneration
 import torch
 import torch.nn as nn
 
+# SET DEVICE CUDA
 device="cuda"
+EMBEDDINGS_SIZE = 4096
 
-class GPTPromptTuningMixin:
-    # SET DEVICE CUDA
-    device = "cuda"
+class T5PromptTuningMixin:
 
     @classmethod
     def from_pretrained(
@@ -69,7 +69,7 @@ class GPTPromptTuningMixin:
             init_prompt_value = torch.FloatTensor(2, 10).uniform_(
                 -random_range, random_range
             )
-        self.soft_prompt = nn.Embedding(n_tokens, 1536)
+        self.soft_prompt = nn.Embedding(n_tokens, EMBEDDINGS_SIZE)
         # Initialize weight
         self.soft_prompt.weight = nn.parameter.Parameter(init_prompt_value)
 
@@ -158,6 +158,6 @@ class GPTPromptTuningMixin:
 
 
 
-class GPTJPromptTuningLM(GPTPromptTuningMixin, GPTJForCausalLM):
+class T5PromptTuningLM(T5PromptTuningMixin, T5ForConditionalGeneration):
     def __init__(self, config):
         super().__init__(config)
