@@ -1,1 +1,1 @@
-# PromptTuning GPT-JT-6B
+# PromptTuning T5-Flan-XXL
