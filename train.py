@@ -1,3 +1,4 @@
+from sklearn.model_selection import train_test_split
 from transformers import (AutoTokenizer, AdamW, get_scheduler)
 from model import T5PromptTuningLM
 import pandas as pd
@@ -10,17 +11,19 @@ from datasets import load_dataset
 from datasets import Dataset as HDataset
 from tqdm import tqdm
 
+INPUT_CONTEXT_SIZE = 984
+OUTPUT_CONTEXT_SIZE = 32
+
 class NewsDataset(Dataset):
-    def __init__(self, file_path: str):
-        self.file_path = file_path
+    def __init__(self, df):
         self.instances = []
 
-        dataset = pd.read_csv(file_path)
-        dataset.dropna(inplace=True)
-        for line, label in tqdm(zip(dataset["sentence"].values, dataset["label"].values), total=len(dataset["label"].values)):
+        dataset = df
+
+        for line, label in tqdm(zip(dataset["text"].values, dataset["label"].values), total=len(dataset["label"].values)):
             instance = {
-                        "sentence": line+"</s>",
-                        "label": "LABEL: " + label+"</s>",
+                    "sentence": line+"</s>",
+                    "label": "LABEL: "+ label+"</s>"
                        }
             self.instances.append(instance)
 
@@ -32,7 +35,7 @@ class NewsDataset(Dataset):
 
 
 class T5Classification(pl.LightningModule):
-    def __init__(self, model_name:str="google/flan-t5-xxl",
+    def __init__(self, model_name:str="google/flan-t5-large",
                  num_train_epochs:int=3,
                  weight_decay:float=0.01,
                  learning_rate:float=0.01,
@@ -51,7 +54,7 @@ class T5Classification(pl.LightningModule):
 
         self.model = T5PromptTuningLM.from_pretrained(self.model_name,
                                                       device_map="auto",
-                                                      load_in_8bit=True,
+                                                      #load_in_8bit=True,
                                                       n_tokens=self.n_prompt_tokens,
                                                       initialize_from_vocab=self.init_from_vocab)
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
@@ -68,22 +71,22 @@ class T5Classification(pl.LightningModule):
             sentences.append(instance["sentence"])
             labels.append(instance["label"])
 
-        sentences_batch = self.tokenizer(sentences, padding="max_length", max_length=2008, truncation=True, return_tensors="pt")
+        sentences_batch = self.tokenizer(sentences, padding="max_length", max_length=INPUT_CONTEXT_SIZE, truncation=True, return_tensors="pt")
         sentences_batch = {key:val.to("cuda") for key, val in zip(sentences_batch.keys(), sentences_batch.values())}
 
-        labels_batch = self.tokenizer(labels, padding="max_length", max_length=64, truncation=True, return_tensors="pt")
+        labels_batch = self.tokenizer(labels, padding="max_length", max_length=OUTPUT_CONTEXT_SIZE, truncation=True, return_tensors="pt")
         labels_batch = {key:val.to("cuda") for key, val in zip(sentences_batch.keys(), sentences_batch.values())}
         
         return sentences_batch, labels_batch
 
     def forward(self, sentence, label):
         outputs = self.model(input_ids=sentence["input_ids"], attention_mask=sentence["attention_mask"],
-                             decoder_input_ids=label["input_ids"], decoder_attention_mask=label["attention_mask"])
+                             labels=label["input_ids"])#, decoder_attention_mask=label["attention_mask"])
         loss, logits = outputs.loss, outputs.logits
         return loss, logits
 
     def training_step(self, batch, batch_idx):
-        loss, logits = self(batch)
+        loss, logits = self(batch[0], batch[1])
         self.train_loss.append(loss.detach().cpu().numpy())
         return loss
 
@@ -106,22 +109,37 @@ class T5Classification(pl.LightningModule):
 def cli_main():
     pl.seed_everything(1234)
 
-    # data
-    train_dataset = NewsDataset("train.csv")
-    test_dataset = NewsDataset("test.csv")
+    ################################ STEP 2 Prepare data ####################
+    df_path = "../PromptTuning-GPT-JT-6B/train.csv"
+    df = pd.read_csv(df_path)
+    df = df.drop('UsedByPublishedData', axis=1)
+    df.dropna(inplace=True)
+    #df.NewsType = pd.Categorical(df.NewsType)
+    #df["label"] = df.NewsType.cat.codes
+    df["label"] = df.NewsType
+    new_df = df[['Body',  'label']].copy()
+    new_df["Body"] = df[["Headline", "Body"]].apply(" ".join, axis=1)
+    new_df["text"] = new_df["Body"]
+    new_df = new_df.drop('Body', axis=1)
+    new_df.dropna(inplace=True)
+
+    train, test = train_test_split(new_df, test_size=0.2, random_state=42, shuffle=True)
+
+    train_dataset = NewsDataset(train)
+    test_dataset = NewsDataset(test)
 
     model = T5Classification()
+
+    train_dataloader = DataLoader(train_dataset, batch_size=2,  shuffle=True, collate_fn=model.my_collate, drop_last=True)
+    test_dataloader = DataLoader(test_dataset, batch_size=2, num_workers=4, shuffle=False, collate_fn=model.my_collate)
+
     trainer = pl.Trainer(max_epochs=model.max_train_steps)
 
-    train_loader = DataLoader(train_dataset, batch_size=16,  shuffle=True, collate_fn=model.my_collate, drop_last=True)
-    test_loader = DataLoader(test_dataset, batch_size=16, num_workers=4, shuffle=False, collate_fn=model.my_collate, pin_memory=True, drop_last=True )
-    #val_loader = DataLoader(valid_dataset, batch_size=16, num_workers=4, shuffle=False, collate_fn=model.my_collate, pin_memory=True, drop_last=True)
-
-    trainer.fit(model, train_loader)
+    trainer.fit(model, train_dataloader)
     print("Saving prompt...")
     save_dir_path = "./soft_prompt"
     model.model.save_soft_prompt(save_dir_path)
-    trainer.test(test_dataloaders=test_loader)
+    trainer.test(test_dataloaders=test_dataloader)
 
 if __name__ == "__main__":
     cli_main()

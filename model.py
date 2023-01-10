@@ -56,14 +56,15 @@ class T5PromptTuningMixin:
 
     def initialize_soft_prompt(
         self,
-        n_tokens: int = 20,
+        n_tokens: int = 40,
         initialize_from_vocab: bool = True,
         random_range: float = 0.5,
     ) -> None:
         self.n_tokens = n_tokens
         if initialize_from_vocab:
             print("Init from vocab...")
-            init_prompt_value = self.transformer.wte.weight[:n_tokens].clone().detach()
+            wte = self.get_input_embeddings()
+            init_prompt_value = wte.weight[:n_tokens].clone().detach()
         else:
             print("Init from random....")
             init_prompt_value = torch.FloatTensor(2, 10).uniform_(
@@ -71,10 +72,18 @@ class T5PromptTuningMixin:
             )
         self.soft_prompt = nn.Embedding(n_tokens, EMBEDDINGS_SIZE)
         # Initialize weight
-        self.soft_prompt.weight = nn.parameter.Parameter(init_prompt_value)
+        self.soft_prompt.weight = nn.parameter.Parameter(init_prompt_value).to("cuda")
 
     def _cat_learned_embedding_to_input(self, input_ids) -> torch.Tensor:
-        inputs_embeds = self.transformer.wte(input_ids)
+
+        for name, param in self.named_parameters():
+            if param.is_cuda == False:
+                self = self.to("cuda")
+                print(name)
+                break;
+        
+        wte = self.get_input_embeddings()
+        inputs_embeds = wte(input_ids)
 
         if len(list(inputs_embeds.shape)) == 2:
             inputs_embeds = inputs_embeds.unsqueeze(0)
@@ -113,7 +122,7 @@ class T5PromptTuningMixin:
     def save_soft_prompt(self, path: str, filename: str = "soft_prompt.model"):
         Path(path).mkdir(parents=True, exist_ok=True)
         torch.save(self.soft_prompt, os.path.join(path, filename))
-        # print(f"Saved soft prompt: {os.path.join(path, filename)}")
+        print(f"Saved soft prompt: {os.path.join(path, filename)}")
 
     def forward(
         self,
@@ -134,7 +143,6 @@ class T5PromptTuningMixin:
     ):
  
         # put model on cuda
-        self.transformer = self.transformer.to("cuda")
 
         if input_ids is not None:
             inputs_embeds = self._cat_learned_embedding_to_input(input_ids).to(
